@@ -1,14 +1,19 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <variant>
 #include <vector>
 
 #include <boost/json.hpp>
 #include <nanodbc/nanodbc.h>
 
-#include <windows.h>
+#include "PrettyPrint.h"
 
-#include <sqlext.h>
+// clang-format off
+#include <windows.h>
+#include <sqltypes.h>
+#include <sqlucode.h>
+// clang-format on
 
 namespace json = boost::json;
 
@@ -18,95 +23,58 @@ struct TableExport
    std::string extractQry;
 };
 
-std::vector<TableExport> g_tablesToExport =
-   {{"Tags", "SELECT * FROM Tags ORDER BY Tag_Code"},
-    {"Fields", "SELECT * FROM Fields ORDER BY Msg_Code, Tag_Code"},
-    {"LogFiles", "SELECT * FROM LogFiles ORDER BY Log_Code"},
-    {"Messages", "SELECT * FROM Messages ORDER BY Msg_Code"},
-    {"LoggerMessages", "SELECT Log_Code, Msg_Code, Schema FROM LoggerMessages WHERE  Header_Msg_Code IS NULL ORDER BY Schema, Log_Code, Msg_Code"},
-    {"HeaderMessages", "SELECT Header_Msg_Code as Header_Code, Schema, Log_Code, Msg_Code FROM LoggerMessages WHERE  Header_Msg_Code IS NOT NULL ORDER BY Header_Msg_Code, Schema, Log_Code, Msg_Code"}};
+std::vector<TableExport> g_tablesToExport = {
+   {"Tags", "SELECT top 1 * FROM Tags ORDER BY Tag_Code"},
+   {"Fields", "SELECT top 1 * FROM Fields ORDER BY Msg_Code, Tag_Code"},
+   {"LogFiles", "SELECT top 1 * FROM LogFiles ORDER BY Log_Code"},
+   {"Messages", "SELECT top 1 * FROM Messages ORDER BY Msg_Code"},
+   {"LoggerMessages", "SELECT top 1 Log_Code, Msg_Code, Schema FROM LoggerMessages WHERE  Header_Msg_Code IS NULL ORDER BY Schema, Log_Code, Msg_Code"},
+   {"HeaderMessages",
+    "SELECT top 1 Header_Msg_Code as Header_Code, Schema, Log_Code, Msg_Code FROM LoggerMessages WHERE  Header_Msg_Code IS NOT NULL ORDER BY Header_Msg_Code, Schema, Log_Code, Msg_Code"},
+};
 
-json::value toJsonValue(int colNb, nanodbc::result& row)
+std::string convertWideToUtf8(const nanodbc::wide_string& wData)
 {
-   if (row.is_null(colNb))
-      return json::value {nullptr};
+   if (wData.empty())
+      return std::string {};
 
-   switch (row.column_datatype(colNb))
-   {
-      case SQL_LONGVARCHAR:
-      case SQL_CHAR:
-      case SQL_VARCHAR:
-         return json::value {row.get<nanodbc::string>(colNb)};
-
-      case SQL_BIT:
-         return json::value {row.get<int>(colNb)};
-
-      // SQL_FLOAT is "driver defined" could be 32 bit, 64 bit, 80 bit whatever!! use double
-      case SQL_FLOAT:
-         return json::value {row.get<double>(colNb)};
-
-      case SQL_DOUBLE:
-         return json::value {row.get<double>(colNb)};
-      case SQL_REAL:
-         return json::value {row.get<float>(colNb)};
-
-      default:
-         return json::value {row.get<nanodbc::string>(colNb)};
-   }
-}
-
-std::string convertWideToUtf8(nanodbc::wide_string wData)
-{
-   std::string utf8Data(1000 + wData.size() * 2, '\0');
-
-   auto convertedLen = ::WideCharToMultiByte(CP_UTF8, 0, wData.c_str(), wData.size() + 1, &utf8Data[0], utf8Data.size(), NULL, NULL);
-   if (convertedLen == 0)
+   auto utf8Len = ::WideCharToMultiByte(CP_UTF8, 0, wData.c_str(), wData.size(), nullptr, 0, nullptr, nullptr);
+   if (utf8Len == 0)
    {
       throw std::runtime_error("can't convert to utf8 string");
    }
 
-   std::string result(&utf8Data[0], &utf8Data[convertedLen - 1]);
-   return result;
-}
-//
-std::string convert1252ToUtf8(std::string code1252)
-{
-   std::vector<wchar_t> outBuff(1000 + code1252.size() * 2, L'\0');
+   std::string utf8Data(utf8Len, '\0');
 
-   auto convertedLen = ::MultiByteToWideChar(CP_ACP, 0, code1252.c_str(), code1252.size() + 1, &outBuff[0], outBuff.size());
-   if (convertedLen == 0)
+   if (::WideCharToMultiByte(CP_UTF8, 0, wData.c_str(), wData.size(), &utf8Data[0], utf8Data.size(), nullptr, nullptr) == 0)
+   {
+      throw std::runtime_error("can't convert from wide to utf8 string");
+   }
+
+   return utf8Data;
+}
+
+//
+std::string convert1252ToUtf8(const std::string& code1252)
+{
+   if (code1252.empty())
+      return std::string {};
+
+   auto wideLen = ::MultiByteToWideChar(CP_ACP, 0, code1252.c_str(), code1252.size(), nullptr, 0);
+   if (wideLen == 0)
+   {
+      throw std::runtime_error("can't convert from codepage 1252 to wstring");
+   }
+
+   nanodbc::wide_string wideString(wideLen, L'\0');
+
+   if (::MultiByteToWideChar(CP_ACP, 0, code1252.c_str(), code1252.size(), &wideString[0], wideString.size()) == 0)
    {
       throw std::runtime_error("can't convert to wstring");
    }
-   std::vector<char> utf8Data(outBuff.size(), '\0');
-
-   convertedLen = ::WideCharToMultiByte(CP_UTF8, 0, &outBuff[0], convertedLen, &utf8Data[0], utf8Data.size(), NULL, NULL);
-   if (convertedLen == 0)
-   {
-      throw std::runtime_error("can't convert to utf8 string");
-   }
-
-   std::string result(&utf8Data[0], &utf8Data[convertedLen - 1]);
-   return result;
+   return convertWideToUtf8(wideString);
 }
 
-std::string GetUtf8StringFromResult(nanodbc::result& results, short i)
-{
-   try
-   {
-      return convertWideToUtf8(results.get<nanodbc::wide_string>(i));
-   }
-   catch (std::exception& ex)
-   {
-      for (short idx = 0; idx < results.columns(); idx++)
-      {
-         if (results.is_bound(idx) && results.is_null(idx) == false)
-            std::cout << results.column_name(idx) << ": [" << results.get<nanodbc::string>(idx) << "]";
-      }
-      std::cout << "\n" << ex.what() << " on column: " << results.column_name(i) << std::endl;
-      throw;
-   }
-}
 void DumpResult(nanodbc::result& result, short BadCol)
 {
    for (int i = 0; i < result.columns(); i++)
@@ -119,163 +87,152 @@ void DumpResult(nanodbc::result& result, short BadCol)
    std::cout << "\n error with: " << result.column_name(BadCol) << std::endl;
 }
 
-json::object RowToJsonObject(nanodbc::result& results)
+struct ToJsonValue
+{
+   json::value& _v;
+
+   ToJsonValue(json::value& v) : _v(v) {}
+   void operator()(void*) const { _v = nullptr; }
+   void operator()(int64_t i) const { _v = i; }
+   void operator()(double d) const { _v = d; }
+   void operator()(const std::string& s) const { _v = s; }
+   void operator()(const std::vector<uint8_t>& v) const { _v = json::value_from(v); }
+};
+
+struct ToJsonArray
+{
+   json::array& _a;
+
+   ToJsonArray(json::array& a) : _a(a) {}
+   void operator()(void*) const { _a.push_back(nullptr); }
+   void operator()(int64_t i) const { _a.push_back(i); }
+   void operator()(double d) const { _a.push_back(d); }
+   void operator()(const std::string& s) const
+   {
+      json::value v;
+
+      v = s;
+      _a.push_back(v);
+   }
+   void operator()(const std::vector<uint8_t>& v) const { _a.push_back(json::value_from(v)); }
+};
+
+using DbValue = std::variant<void*, int64_t, std::string, double, std::vector<uint8_t>>;
+
+DbValue GetColumnValue(nanodbc::result& row, short col)
+{
+   DbValue dbData;
+   if (row.is_bound(col) && row.is_null(col))
+      return dbData;
+
+   // for long data type, must fetch then test for NULL
+   // for short data type, we must test for null before fetching!
+   switch (row.column_datatype(col))
+   {
+      case SQL_LONGVARBINARY:
+      {
+         // Unbound data can only be tested for null once fetched
+         auto blob = row.get<std::vector<uint8_t>>(col);   // try to fetch blob
+         if (row.is_null(col) == false)                    // did we get data ?
+            dbData = blob;
+         return dbData;
+      }
+
+      case SQL_LONGVARCHAR:
+      {
+         // Unbound data can only be tested for null once fetched
+         auto longText = row.get<nanodbc::string>(col);   // try to fetch long text
+         if (row.is_null(col) == false)                   // got something!!!
+            dbData = convert1252ToUtf8(longText);         // long text appear as codepage 1252, convert to utf8 which is what json understand
+         return dbData;
+      }
+
+      case SQL_BIGINT:
+      case SQL_TINYINT:
+      case SQL_INTEGER:
+      case SQL_SMALLINT:
+         dbData = row.get<std::int64_t>(col);
+         return dbData;
+
+      case SQL_VARCHAR:
+      case SQL_CHAR:
+         dbData = convertWideToUtf8(row.get<nanodbc::wide_string>(col));
+         return dbData;
+
+      case SQL_NUMERIC:
+      case SQL_DECIMAL:
+      case SQL_FLOAT:
+      case SQL_REAL:
+      case SQL_DOUBLE:
+         dbData = row.get<double>(col);
+         return dbData;
+
+      default:
+         dbData = convertWideToUtf8(row.get<nanodbc::wide_string>(col));
+         return dbData;
+   }
+}
+
+json::object RowToJsonObject(nanodbc::result& row)
 {
    json::object rowData;
-   const short  columns = results.columns();
-   for (short i = 0; i < columns; ++i)
+   for (short colIdx = 0; colIdx < row.columns(); colIdx++)
    {
-      auto colName = results.column_name(i);
-      // for long data type, must fetch then test for NULL
-      // for short data type, we must test for null before fetching!
-      switch (results.column_datatype(i))
-      {
-         case SQL_LONGVARBINARY:
-         {
-            // Unbound data can only be tested for null once fetched
-            auto blob = results.get<std::vector<uint8_t>>(i);   // try to fetch blob
-            if (results.is_null(i) == false)                    // got data
-            {
-               rowData[colName] = json::value_from(blob);
-            }
-            else
-            {
-               rowData[colName] = nullptr;
-            }
-            break;
-         }
-
-         case SQL_LONGVARCHAR:
-         {
-            // Unbound data can only be tested for null once fetched
-            auto longText = results.get<nanodbc::string>(i);   // try to fetch long text
-            if (results.is_null(i) == false)                   // got something!!!
-            {
-               rowData[colName] = convert1252ToUtf8(longText);
-            }
-            else
-            {
-               rowData[colName] = nullptr;
-            }
-            break;
-         }
-
-         default:
-         {
-            if (results.is_null(i) == false)
-            {
-               rowData[colName] = convertWideToUtf8(results.get<nanodbc::wide_string>(i));
-            }
-            else
-            {
-               rowData[colName] = nullptr;
-            }
-            break;
-         }
-      }
+      auto& jsonValue = rowData[row.column_name(colIdx)];
+      auto  dbValue   = GetColumnValue(row, colIdx);
+      std::visit(ToJsonValue {jsonValue}, dbValue);
    }
 
    return rowData;
 }
 
-constexpr int json_indent = 2;
-void          pretty_print(std::ostream& os, json::value const& jv, std::string* indent = nullptr)
+
+json::value GetStructureOfArray(nanodbc::result rowIt)
 {
-   std::string indent_;
-   if (!indent)
-      indent = &indent_;
-   switch (jv.kind())
+   json::object data;
+
+   for (auto colIdx = 0; colIdx < rowIt.columns(); colIdx++)
    {
-      case json::kind::object:
-      {
-         os << "{\n";
-         indent->append(json_indent, ' ');
-         auto const& obj = jv.get_object();
-         if (!obj.empty())
-         {
-            auto it = obj.begin();
-            for (;;)
-            {
-               os << *indent << json::serialize(it->key()) << " : ";
-               pretty_print(os, it->value(), indent);
-               if (++it == obj.end())
-                  break;
-               os << ",\n";
-            }
-         }
-         os << "\n";
-         indent->resize(indent->size() - json_indent);
-         os << *indent << "}";
-         break;
-      }
-
-      case json::kind::array:
-      {
-         os << "[\n";
-         indent->append(json_indent, ' ');
-         auto const& arr = jv.get_array();
-         if (!arr.empty())
-         {
-            auto it = arr.begin();
-            for (;;)
-            {
-               os << *indent;
-               pretty_print(os, *it, indent);
-               if (++it == arr.end())
-                  break;
-               os << ",\n";
-            }
-         }
-         os << "\n";
-         indent->resize(indent->size() - json_indent);
-         os << *indent << "]";
-         break;
-      }
-
-      case json::kind::string:
-      {
-         os << json::serialize(jv.get_string());
-         break;
-      }
-
-      case json::kind::uint64:
-         os << jv.get_uint64();
-         break;
-
-      case json::kind::int64:
-         os << jv.get_int64();
-         break;
-
-      case json::kind::double_:
-         os << jv.get_double();
-         break;
-
-      case json::kind::bool_:
-         if (jv.get_bool())
-            os << "true";
-         else
-            os << "false";
-         break;
-
-      case json::kind::null:
-         os << "null";
-         break;
+      data[rowIt.column_name(colIdx)] = json::array {};
    }
 
-   if (indent->empty())
-      os << "\n";
+   int rowCount {0};
+
+   while (rowIt.next())
+   {
+      rowCount++;
+
+      for (auto colIdx = 0; colIdx < rowIt.columns(); colIdx++)
+      {
+         // get Array to populate
+         auto& colArray = data[rowIt.column_name(colIdx)].as_array();
+         auto  dbValue  = GetColumnValue(rowIt, colIdx);
+         std::visit(ToJsonArray {colArray}, dbValue);
+      }
+   }
+
+   json::object object;
+   object["recordCount"] = rowCount;
+   object["data"]        = data;
+
+   return object;
 }
 
+json::array GetArrayOfStructure(nanodbc::result rowIt)
+{
+   json::array rows;
+   while (rowIt.next())
+   {
+      rows.push_back(RowToJsonObject(rowIt));
+   }
+   return rows;
+}
 
 int main(int argc, char** argv)
 {
    std::string database {argv[1]};
    auto        connection_string = "Driver={Microsoft Access Driver (*.mdb, *.accdb)};Dbq=" + database;
 
-   if (argc == 3)
-   {
-      std::cout << "allo";
-   }
    try
    {
       nanodbc::connection conn(connection_string);
@@ -286,14 +243,15 @@ int main(int argc, char** argv)
 
       for (auto tableInfo: g_tablesToExport)
       {
-         json::array rows;
-         for (auto result = nanodbc::execute(conn, tableInfo.extractQry); result.next();)
-         {
-            rows.push_back(RowToJsonObject(result));
-         }
+         auto rowIt = nanodbc::execute(conn, tableInfo.extractQry);
+         // an array of object is more verbose, but easier to visualise and diff
+         tables[tableInfo.name] = GetArrayOfStructure(rowIt);
 
-         tables[tableInfo.name] = rows;
+         // structure of array would be more memory friendly, but less intuitive
+         // see https://en.wikipedia.org/wiki/AoS_and_SoA
+         // tables[tableInfo.name] = GetStructureOfArray(rowIt);
       }
+
 
       jsonDoc["TlgSchema"] = tables;
 

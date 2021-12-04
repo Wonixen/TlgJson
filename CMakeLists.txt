@@ -12,7 +12,11 @@ add_definitions(-DUNICODE -D_UNICODE)
 
 find_package(ODBC REQUIRED)
 
-add_executable(TlgAccess2Json  Access2Json.cpp)
+add_executable(TlgAccess2Json
+               Access2Json.cpp
+               PrettyPrint.cpp
+               PrettyPrint.h
+               )
 target_link_libraries(TlgAccess2Json PRIVATE  ${Boost_LIBRARIES}  nanodbc ODBC::ODBC)
 
 add_executable(JSon2Access  JSon2Access.cpp)
