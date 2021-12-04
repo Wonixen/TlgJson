@@ -1,0 +1,60 @@
+{
+    "version": "1.0.0",
+    "TlgSchema": {
+        "Tags": [
+            {
+                "Tag_Code": 1,
+                "Tag_Name": "SomeName",
+                "Tag_Type": "S"
+            }
+        ],
+        "Fields": [
+            {
+                "Msg_Code": 1,
+                "Tag_Code": 1,
+                "Fld_Ref": 1,
+                "Fld_Name": "SomeString",
+                "Fld_Description": "SomeString",
+                "Fld_Value": "SomeString",
+                "Fld_Format": "SomeString",
+                "Fld_Type": "SomeString",
+                "Key_Type": "SomeString",
+                "Abstract_Level": "SomeString",
+                "Tag_Instance": 1
+            }
+        ],
+        "LogFiles": [
+            {
+                "Log_Code": 1,
+                "Log_Name": "someString",
+                "Log_Description": "someString",
+                "TableDatePattern": "someString",
+                "FileFormat": "someString",
+                "DateFormat": "someString",
+                "Suffix": "someString",
+                "TagIndex": "someString",
+                "TagIndexDelay": "someString",
+                "PartitionField": "someString",
+                "Comment": "someString"
+            }
+        ],
+        "Messages": [
+            {
+                "Msg_Code": 1,
+                "Msg_Name": "Some String",
+                "Msg_Archiving_Name": "Some String",
+                "Msg_Type": "Some String",
+                "Msg_Description": "Some String",
+                "Comment": "Some String"
+            }
+        ],
+        "LoggerMessages": [
+            {
+                "Log_Code": 1,
+                "Msg_Code": 1,
+                "Schema": 1,
+                "Header_Msg_Code": 1
+            }
+        ]
+    }
+}
