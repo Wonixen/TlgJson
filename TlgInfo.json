@@ -52,15 +52,8 @@
       {
         "Log_Code" : 1,
         "Msg_Code" : 2,
-        "Schema" : "BOX"
-      }
-    ],
-    "HeaderMessages" : [
-      {
-        "Header_Code" : 66,
-        "Schema" : "CDCC",
-        "Log_Code" : 633,
-        "Msg_Code" : 10006
+        "Schema" : "BOX",
+        "Header_Msg_Code" : null
       }
     ]
   }
