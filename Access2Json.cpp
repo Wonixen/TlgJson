@@ -59,10 +59,7 @@ struct ToJsonValue
    void operator()(int64_t i) const { _v = i; }
    void operator()(double d) const { _v = d; }
    void operator()(const std::string& s) const { _v = s; }
-   void operator()(const std::vector<uint8_t>& v) const
-   {
-      _v = json::value_from(v);
-   }
+   void operator()(const std::vector<uint8_t>& v) const { _v = json::value_from(v); }
 };
 
 struct ToJsonArray

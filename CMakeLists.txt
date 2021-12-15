@@ -23,5 +23,5 @@ set(TlgAccess2JsonSrc
 add_executable(TlgAccess2Json ${TlgAccess2JsonSrc} )
 target_link_libraries(TlgAccess2Json PRIVATE  ${Boost_LIBRARIES}  nanodbc ODBC::ODBC)
 
-add_executable(JSon2Access  JSon2Access.cpp)
+add_executable(JSon2Access  JSon2Access.cpp utf8Conversion.cpp)
 target_link_libraries(JSon2Access PRIVATE  ${Boost_LIBRARIES}  nanodbc ODBC::ODBC)

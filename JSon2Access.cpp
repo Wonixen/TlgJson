@@ -1,120 +1,159 @@
+#include "utf8Conversion.h"
+
 #include <boost/json.hpp>
 #include <nanodbc/nanodbc.h>
 
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <variant>
 
 namespace json = boost::json;
+
+// this is the locale used by the console in Québec!!!
+static std::locale loc850(".850");
 
 std::string readJsonFile(const std::string& filename)
 {
    std::ifstream input(filename);
-   return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+   return std::string((std::istreambuf_iterator<char>(input)),
+                      std::istreambuf_iterator<char>());
 }
 
-struct ColumnDef
+/*
+specify tables to erase  order is important
+specify data to import, order is important and not necessarely same as in erase
+
+   simplification:
+      - object member name are same as column name
+      - all strings are passed as string in codepage 1252
+      -
+*/
+enum TableIds
 {
-   std::string tag;
-   std::string column;
+   TAGS           = 0,
+   FIELDS         = 1,
+   LOGFILES       = 2,
+   MESSAGE        = 3,
+   LOGGERMESSAGES = 4
 };
 
-class JsonImport
+std::vector<std::string> g_tables = {
+   {"Tags"},
+   {"Fields"},
+   {"LogFiles"},
+   {"Messages"},
+   {"LoggerMessages"},
+};
+
+std::vector<int> deletionOrder = {
+   LOGGERMESSAGES,
+   MESSAGE,
+   LOGFILES,
+   FIELDS,
+   TAGS,
+};
+
+std::vector<int> creationOrder = {
+   TAGS,
+   FIELDS,
+   LOGFILES,
+   MESSAGE,
+   LOGGERMESSAGES,
+};
+
+std::string Quotify(std::string s)
 {
-public:
-   virtual std::string         GetEraseCmd()  = 0;
-   virtual std::string         GetTableName() = 0;
-   virtual std::string         GetJsonName()  = 0;
-   virtual std::set<ColumnDef> GetColumnDef() = 0;
-};
-#if 0
-struct JSonImport
+   std::string r;
+   for (int i = 0; i < s.size(); i++)
+      if (s[i] == '\'')
+         r += "''";
+      else
+         r += s[i];
+   return r;
+}
+
+std::string ToDb(const json::value& jv)
 {
-   std::string              tag;
-   std::string              table;
-   std::string              removeTableDataCmd;
-   std::vector<TagToColumn> tagMapping;
-};
+   switch (jv.kind())
+   {
+      case json::kind::uint64:
+         return std::to_string(jv.get_uint64());
 
-std::vector<JSonImport> g_importInfo = {{"Tags",
-                                         "Tags",
-                                         "DELETE FROM Tags",
-                                         {
-                                            {"Tag_Code", nullptr},
-                                            {"Tag_Code", nullptr},
-                                            {"Tag_Code", nullptr},
-                                         }},
-                                        {"HeaderMessages", "LoggerMessages", ""}};
-#endif
+      case json::kind::int64:
+         return std::to_string(jv.get_int64());
 
+      case json::kind::null:
+         return "NULL";
 
-std::vector<std::string> g_tablesToErase = {
-   "DELETE FROM LoggerMessages",
-   "DELETE FROM Messages",
-   "DELETE FROM LogFiles",
-   "DELETE FROM Fields",
-   "DELETE FROM Tags",
-};
+      case json::kind::string:
+         return "'" + Quotify(Utf8ToCp1252(jv.get_string().c_str())) + "'";
+
+      case json::kind::double_:
+         return std::to_string(jv.get_double());
+   }
+   throw std::runtime_error("invalid json kind for database");
+}
+
 
 int main(int argc, char** argv)
 {
    try
    {
       std::string database {argv[1]};
-      auto        connection_string = "Driver={Microsoft Access Driver (*.mdb, *.accdb)};Dbq=" + database;
-      std::string jsonData          = readJsonFile(argv[2]);
+      auto        connection_string =
+         "Driver={Microsoft Access Driver (*.mdb, *.accdb)};Dbq=" + database;
+      std::string jsonData = readJsonFile(argv[2]);
 
       auto jsonDoc = json::parse(jsonData);
 
       nanodbc::connection conn(connection_string);
 
-      for (auto sqlCmd: g_tablesToErase)
+      for (auto tblId: deletionOrder)
       {
-         auto rowIt = nanodbc::execute(conn, sqlCmd);
+         std::string eraseCmd = std::format("DELETE FROM {}", g_tables.at(tblId));
+         auto        rowIt    = nanodbc::execute(conn, eraseCmd);
          if (rowIt.has_affected_rows())
          {
             std::cout << "deleted row(s): " << rowIt.affected_rows() << std::endl;
          }
       }
 
-      auto        version = jsonDoc.at("version");
-      auto        schema  = jsonDoc.at("TlgSchema");
-      auto const& tables  = schema.get_object();
+      auto        version    = jsonDoc.at("version");
+      auto        schema     = jsonDoc.at("TlgSchema");
+      auto const& jsonTables = schema.get_object();
 
-      if (!tables.empty())
+      for (auto tblId: creationOrder)
       {
-         for (auto table = tables.begin(); table != tables.end(); ++table)
+         auto                 tableName = g_tables.at(tblId);
+         auto                 tableData = jsonTables.at(tableName).as_array();
+         nanodbc::transaction transaction(conn);
+         for (const auto& data: tableData)
          {
-            auto const& rows = table->value().get_array();
-            if (!rows.empty())
-            {
-               std::ostringstream cmdHeader;
-               cmdHeader << "insert into " << table->key_c_str() << "(";
+            const auto& row = data.as_object();
+            if (row.empty())
+               continue;
+            std::string colList;
+            std::string values;
 
-               for (size_t idx = 0; idx < rows.size(); idx++)
+            for (auto it = row.begin(); it != row.end(); ++it)
+            {
+               if (it != row.begin())
                {
-                  auto row = rows[idx].get_object();
-                  if (row.empty() == false)
-                  {
-                     std::ostringstream sqlColumns;
-                     std::ostringstream sqlValues;
-                     for (auto it = row.begin(); it != row.end(); ++it)
-                     {
-                        if (it != row.begin())
-                        {
-                           sqlColumns << ", ";
-                           sqlValues << ", ";
-                        }
-                        sqlColumns << it->key_c_str();
-                        sqlValues << it->value();
-                     }
-                     std::ostringstream sqlCmd;
-                     sqlCmd << cmdHeader.str() << sqlColumns.str() << ") VALUES(" << sqlValues.str() << ")";
-                     std::cout << sqlCmd.str() << std::endl;
-                  }
+                  colList += ", ";
+                  values += ", ";
                }
+
+               colList += it->key_c_str();
+               values += ToDb(it->value());
             }
+            auto sqlCmd = std::format("insert into {} ({}) VALUES({});", tableName, colList, values);
+            nanodbc::execute(conn, sqlCmd);
          }
+         std::cout << std::endl;
+
+         transaction.commit();
       }
    }
    catch (const std::exception& e)
