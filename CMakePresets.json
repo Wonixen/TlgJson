@@ -1,0 +1,96 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "base",
+      "description": "Windows stuff",
+      "hidden": true,
+      "generator": "Visual Studio 16 2019",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "toolset": {
+            "value": "host=x64",
+            "strategy": "set"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+      {
+      "name": "x64",
+      "displayName": "x64",
+      "description": "Sets build type and x64 arch",
+      "inherits": "base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+      }
+    },
+    {
+      "name": "x86",
+      "displayName": "x86",
+      "description": "Sets build type and x86 arch",
+      "inherits": "base",
+      "architecture": {
+        "value": "win32",
+        "strategy": "set"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x86-windows-static"
+      }
+    }
+   ],
+ "buildPresets": [
+    {
+      "name": "x86-Debug",
+      "displayName": "Debug",
+      "configurePreset": "x86",
+      "configuration": "Debug",
+      "description": "Win32 Debug Build"
+    },
+    {
+      "name": "x86-Release",
+      "displayName": "Release",
+      "configurePreset": "x86",
+      "configuration": "Release",
+      "description": "Win32 Release build"
+    },
+    {
+      "name": "x86-Release",
+      "displayName": "RelWithDebInfo",
+      "configurePreset": "x86",
+      "configuration": "RelWithDebInfo",
+      "description": "Win32 RelWithDebInfo build"
+    },
+    {
+      "name": "x64-debug",
+      "displayName": "Debug",
+      "configurePreset": "x64",
+      "configuration": "Debug",
+      "description": "x64 Debug Build with static lib"
+    },
+    {
+      "name": "x64-Release",
+      "displayName": "Release",
+      "configurePreset": "x64",
+      "configuration": "Release",
+      "description": "x64 Static Release"
+    },
+    {
+      "name": "x64-RelWithDebInfo",
+      "displayName": "RelWithDebInfo",
+      "configurePreset": "x64",
+      "configuration": "RelWithDebInfo",
+      "description": "x64 Static Release"
+    }
+  ]
+}
